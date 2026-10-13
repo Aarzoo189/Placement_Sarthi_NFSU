@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.dev-accounts.json
+uploads
+backups
+audit-archive
+*.log

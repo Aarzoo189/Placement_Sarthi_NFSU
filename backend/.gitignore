@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.dev-accounts.json
+uploads
+audit-archive
+backups
+*.tsbuildinfo
+.dev-accounts.md
+uploads-test
+audit-archive-test

@@ -1,0 +1,45 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: placement_owner, POSTGRES_PASSWORD: owner_dev_password, POSTGRES_DB: placement, APP_DB_PASSWORD: app_dev_password }
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U placement_owner" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: backend/package-lock.json }
+      - name: Create the app role (what db/init/01-roles.sh does in Docker)
+        run: PGPASSWORD=owner_dev_password psql -h localhost -p 5433 -U placement_owner -d placement -c "CREATE ROLE placement_app LOGIN PASSWORD 'app_dev_password' NOSUPERUSER NOBYPASSRLS; GRANT CONNECT ON DATABASE placement TO placement_app; GRANT USAGE ON SCHEMA public TO placement_app;"
+      - run: cp .env.example .env && sed -i 's/^REDIS_URL=.*/REDIS_URL=redis:\/\/localhost:6380/' .env
+      - run: cd backend && npm ci --legacy-peer-deps && npx prisma generate
+      - run: cd backend && npm run typecheck
+      - run: cd backend && npm test
+      - run: cd backend && npm run test:e2e
+      - name: Dependency audit (fails on high/critical)
+        run: cd backend && npm audit --omit=dev --audit-level=high
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: cd frontend && npm ci && npm run lint && npm run build
+      - run: cd frontend && npm audit --omit=dev --audit-level=high
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: returntocorp/semgrep-action@v1
+        with: { config: "p/typescript p/owasp-top-ten p/jwt p/nodejs" }

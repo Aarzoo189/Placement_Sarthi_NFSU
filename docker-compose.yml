@@ -1,0 +1,117 @@
+# NFSU Placement Portal
+#
+#   docker compose up -d                 -> data tier only (Postgres 16, Redis, Mailpit); run API + web on the host
+#   docker compose --profile full up -d  -> everything: API, web, WAF edge (TLS 1.3, ModSecurity + OWASP CRS)
+#
+# Postgres and Redis are bound to 127.0.0.1 for local development. In the "full" profile the
+# data tier sits on an internal network with no route to the internet (see networks below).
+
+name: nfsu-placement
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: placement_owner
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:-owner_dev_password}
+      POSTGRES_DB: placement
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app_dev_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${PG_PORT:-5433}:5432"
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U placement_owner -d placement"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-redis_dev_password}", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6380}:6379"
+    volumes:
+      - redisdata:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-redis_dev_password} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Dev SMTP sink: OTP e-mails, activation links and alerts show up at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+    networks: [data, app]
+
+  api:
+    profiles: ["full"]
+    build: ./backend
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://placement_app:${APP_DB_PASSWORD:-app_dev_password}@postgres:5432/placement?schema=public
+      DIRECT_DATABASE_URL: postgresql://placement_owner:${OWNER_DB_PASSWORD:-owner_dev_password}@postgres:5432/placement?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      WEB_ORIGIN: https://localhost:8443
+      WEBAUTHN_RP_ID: localhost
+      TRUST_PROXY: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [data, app]
+
+  web:
+    profiles: ["full"]
+    build: ./frontend
+    restart: unless-stopped
+    depends_on: [api]
+    networks: [app]
+
+  # Edge: TLS 1.3 + HSTS + WAF (ModSecurity with the OWASP Core Rule Set) + rate limiting, in front of web/api.
+  edge:
+    profiles: ["full"]
+    image: owasp/modsecurity-crs:4-nginx
+    restart: unless-stopped
+    environment:
+      SERVER_NAME: localhost
+      BACKEND: http://web:80
+      PORT: "8080"
+      SSL_PORT: "8443"
+      PROXY_SSL: "on"
+      PROXY_SSL_CERT: /certs/tls.crt
+      PROXY_SSL_CERT_KEY: /certs/tls.key
+      PROXY_SSL_PROTOCOLS: "TLSv1.3"
+      PARANOIA: "1"
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      ANOMALY_OUTBOUND: "4"
+    volumes:
+      - ./nginx/certs:/certs:ro
+    ports:
+      - "8443:8443"
+    depends_on: [web]
+    networks: [app, edge]
+
+networks:
+  # `data` has no outbound route: Postgres/Redis are only reachable by the API (and from 127.0.0.1 for dev).
+  data:
+    internal: false
+  app: {}
+  edge: {}
+
+volumes:
+  pgdata:
+  redisdata:

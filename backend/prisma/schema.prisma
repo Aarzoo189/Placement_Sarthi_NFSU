@@ -1,0 +1,599 @@
+// NFSU Placement Portal data model (architecture doc, section 6).
+//
+// Conventions
+//  - Column and field names are snake_case exactly as in the architecture document; the API speaks snake_case too.
+//  - Append-only tables (offer_event, engine_decision, attendance, audit_log, export_log): the application DB role has
+//    INSERT/SELECT only. See prisma/migrations/*_security for grants, row-level security policies and views.
+//  - "_enc" columns hold AES-256-GCM ciphertext written by the API (see src/common/crypto.service.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // runtime: placement_app (RLS applies)
+  directUrl = env("DIRECT_DATABASE_URL") // migrations: placement_owner
+}
+
+enum Role {
+  student
+  coordinator
+  officer
+  hr
+  admin
+  superadmin
+}
+
+enum UserStatus {
+  invited
+  active
+  locked
+  disabled
+}
+
+enum MfaType {
+  totp
+  passkey
+  email
+}
+
+enum RegistrationStatus {
+  not_registered
+  registered
+  deregistered
+}
+
+enum EligibilityStatus {
+  pending
+  eligible
+  ineligible
+}
+
+enum OfferType {
+  I
+  F
+  IF
+}
+
+enum Category {
+  A_PLUS @map("A+")
+  A
+  B
+  C
+}
+
+enum DriveStatus {
+  draft
+  open
+  closed
+}
+
+enum ApplicationStage {
+  pending_review
+  applied
+  shortlisted
+  selected
+  rejected
+  withdrawn
+}
+
+enum AttendanceEvent {
+  PPT
+  TEST
+  INTERVIEW
+}
+
+enum AcceptanceStatus {
+  pending
+  accepted
+  declined
+  expired
+}
+
+enum PpoStatus {
+  not_applicable
+  pending
+  confirmed
+  declined
+}
+
+enum JoiningStatus {
+  pending
+  joined
+  not_joined
+}
+
+enum NocStatus {
+  not_required
+  pending
+  received
+}
+
+enum DecisionResult {
+  ALLOW
+  BLOCK
+  REVIEW
+}
+
+enum PolicyStatus {
+  draft
+  proposed
+  published
+  superseded
+  rejected
+}
+
+enum RequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ProposalStatus {
+  proposed
+  confirmed
+  rejected
+}
+
+enum CaseKind {
+  engine_review
+  absenteeism
+  violation
+  expired_offer
+}
+
+enum CaseStatus {
+  open
+  approved
+  blocked
+  resolved
+}
+
+// ---------------------------------------------------------------- identity ----
+
+model user_account {
+  id                    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                 String     @unique // stored lower-case
+  name                  String
+  password_hash         String?
+  role                  Role
+  status                UserStatus @default(invited)
+  mfa_enrolled          Boolean    @default(false)
+  last_login            DateTime?
+  activation_token_hash String?    @unique
+  activation_expires    DateTime?
+  password_changed_at   DateTime?
+  created_by            String?    @db.Uuid
+  created_at            DateTime   @default(now())
+
+  mfa_factors      mfa_factor[]
+  recovery_codes   recovery_code[]
+  sessions         session[]
+  trusted_devices  trusted_device[]
+  coordinator_scope coordinator_scope[]
+  student          student?
+  hr_user          hr_user?
+}
+
+model mfa_factor {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String    @db.Uuid
+  type          MfaType
+  secret_enc    String? // TOTP secret, encrypted
+  credential_id String?   @unique // passkey credential id (base64url)
+  public_key    String? // passkey public key (base64url)
+  counter       BigInt    @default(0)
+  transports    String?
+  label         String?
+  confirmed_at  DateTime?
+  created_at    DateTime  @default(now())
+
+  user user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model recovery_code {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id   String    @db.Uuid
+  code_hash String
+  used_at   DateTime?
+
+  user user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+// Live sessions are in Redis; this is the audit mirror.
+model session {
+  id         String    @id
+  user_id    String    @db.Uuid
+  ip         String?
+  user_agent String?
+  created_at DateTime  @default(now())
+  expires_at DateTime
+  step_up_at DateTime?
+  revoked_at DateTime?
+
+  user user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+// "Remember this device": students only, 30 days max.
+model trusted_device {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  token_hash String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+// ------------------------------------------------------------ people / orgs ----
+
+model programme {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code String @unique
+  name String
+
+  students          student[]
+  coordinator_scope coordinator_scope[]
+}
+
+model student {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  placement_id        String             @unique
+  user_id             String?            @unique @db.Uuid
+  name                String
+  mobile_enc          String
+  mobile_hash         String             @unique // HMAC of the normalised number: duplicate detection without decrypting
+  email               String             @unique
+  programme_id        String             @db.Uuid
+  batch               Int
+  cgpa                Decimal            @default(0) @db.Decimal(4, 2)
+  backlogs            Int                @default(0)
+  registration_status RegistrationStatus @default(not_registered)
+  eligibility_status  EligibilityStatus  @default(pending)
+  resume_path         String?
+  archived_at         DateTime?
+  created_by          String?            @db.Uuid
+  created_at          DateTime           @default(now())
+
+  user      user_account? @relation(fields: [user_id], references: [id])
+  programme programme     @relation(fields: [programme_id], references: [id])
+
+  applications     application[]
+  attendance       attendance[]
+  offers           offer[]
+  exceptions       exception[]
+  decisions        engine_decision[]
+  placement_state  student_placement_state?
+  change_requests  contact_change_request[]
+
+  @@index([programme_id, batch])
+}
+
+model coordinator_scope {
+  user_id      String @db.Uuid
+  programme_id String @db.Uuid
+
+  user      user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  programme programme    @relation(fields: [programme_id], references: [id])
+
+  @@id([user_id, programme_id])
+}
+
+model company {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String   @unique
+  verified_domain String
+  created_by      String?  @db.Uuid
+  created_at      DateTime @default(now())
+
+  drives   drive[]
+  hr_users hr_user[]
+}
+
+model hr_user {
+  user_id     String   @id @db.Uuid
+  company_id  String   @db.Uuid
+  valid_until DateTime // expires when the drive closes
+
+  user    user_account @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  company company      @relation(fields: [company_id], references: [id])
+}
+
+// -------------------------------------------------------------- recruitment ----
+
+model drive {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id          String      @db.Uuid
+  title               String
+  offer_type          OfferType
+  ctc_lpa             Decimal?    @db.Decimal(6, 2) // FTE CTC in LPA (F, I+F)
+  stipend_amount      Decimal?    @db.Decimal(10, 2) // internship stipend (I, I+F); never mixed with CTC
+  stipend_period      String? // monthly | total
+  category            Category? // derived from ctc_lpa by the rule engine; never typed
+  criteria_json       Json        @default("{}") // { min_cgpa, max_backlogs, programmes: [code], batches: [year] }
+  acceptance_deadline DateTime? // company's stated deadline for offer acceptance
+  drive_date          DateTime?
+  status              DriveStatus @default(draft)
+  created_by          String?     @db.Uuid
+  created_at          DateTime    @default(now())
+  opened_at           DateTime?
+  closed_at           DateTime?
+
+  company      company           @relation(fields: [company_id], references: [id])
+  applications application[]
+  attendance   attendance[]
+  offers       offer[]
+  decisions    engine_decision[]
+  proposals    offer_proposal[]
+
+  @@index([company_id])
+}
+
+model application {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id         String           @db.Uuid
+  drive_id           String           @db.Uuid
+  engine_decision_id String?          @db.Uuid
+  stage              ApplicationStage @default(applied)
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @default(now()) @updatedAt
+
+  student  student          @relation(fields: [student_id], references: [id])
+  drive    drive            @relation(fields: [drive_id], references: [id])
+  decision engine_decision? @relation(fields: [engine_decision_id], references: [id])
+
+  @@unique([student_id, drive_id])
+  @@index([drive_id, stage])
+}
+
+// Append-only: a correction is a new row; the latest row per (student, drive, event) wins (attendance_current_v).
+model attendance {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id   String          @db.Uuid
+  drive_id     String          @db.Uuid
+  event        AttendanceEvent
+  present      Boolean
+  exception_id String?         @db.Uuid
+  recorded_by  String?         @db.Uuid
+  at           DateTime        @default(now())
+
+  student   student    @relation(fields: [student_id], references: [id])
+  drive     drive      @relation(fields: [drive_id], references: [id])
+  exception exception? @relation(fields: [exception_id], references: [id])
+
+  @@index([student_id, at])
+  @@index([drive_id])
+}
+
+// ------------------------------------------------------------------- offers ----
+
+model offer {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id         String           @db.Uuid
+  drive_id           String?          @db.Uuid
+  off_campus_company String?
+  type               OfferType
+  category           Category? // derived from CTC at issue time (and on CTC correction), never typed
+  ctc_enc            String? // encrypted LPA (F, I+F)
+  stipend_enc        String? // encrypted stipend (I, I+F); never averaged with CTC
+  offer_date         DateTime         @default(now())
+  deadline           DateTime
+  acceptance_status  AcceptanceStatus @default(pending)
+  ppo_status         PpoStatus        @default(not_applicable)
+  joining_status     JoiningStatus    @default(pending)
+  noc_status         NocStatus        @default(not_required)
+  policy_version     Int?
+  created_by         String?          @db.Uuid
+  created_at         DateTime         @default(now())
+
+  student student       @relation(fields: [student_id], references: [id])
+  drive   drive?        @relation(fields: [drive_id], references: [id])
+  events  offer_event[]
+
+  @@index([student_id, acceptance_status])
+}
+
+// Full history; never updated. Sensitive values (ctc, stipend) are stored encrypted here too.
+model offer_event {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  offer_id  String   @db.Uuid
+  field     String
+  old_value String?
+  new_value String?
+  actor_id  String?  @db.Uuid
+  at        DateTime @default(now())
+
+  offer offer @relation(fields: [offer_id], references: [id])
+
+  @@index([offer_id, at])
+}
+
+// HR proposes; the Placement Officer confirms, which creates the offer row.
+model offer_proposal {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  drive_id    String         @db.Uuid
+  student_id  String         @db.Uuid
+  proposed_by String         @db.Uuid
+  ctc_enc     String?
+  stipend_enc String?
+  note        String?
+  status      ProposalStatus @default(proposed)
+  decided_by  String?        @db.Uuid
+  decided_at  DateTime?
+  offer_id    String?        @db.Uuid
+  created_at  DateTime       @default(now())
+
+  drive drive @relation(fields: [drive_id], references: [id])
+
+  @@index([status])
+}
+
+// ---------------------------------------------------------- policy + engine ----
+
+model policy_version {
+  version        Int          @id
+  status         PolicyStatus @default(draft)
+  note           String?
+  created_by     String?      @db.Uuid
+  proposed_by    String?      @db.Uuid
+  published_by   String?      @db.Uuid
+  created_at     DateTime     @default(now())
+  published_at   DateTime?
+  effective_from DateTime?
+
+  rules policy_rule[]
+}
+
+model policy_rule {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version        Int
+  code           String
+  params_json    Json
+  effective_from DateTime @default(now())
+
+  policy policy_version @relation(fields: [version], references: [version])
+
+  @@unique([version, code])
+}
+
+// Explains every allow/block/review. Append-only.
+model engine_decision {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id       String         @db.Uuid
+  drive_id         String         @db.Uuid
+  result           DecisionResult
+  fired_rules_json Json
+  policy_version   Int
+  exception_id     String?        @db.Uuid
+  trigger          String // apply | shortlist | drive_open | review
+  at               DateTime       @default(now())
+
+  student      student       @relation(fields: [student_id], references: [id])
+  drive        drive         @relation(fields: [drive_id], references: [id])
+  applications application[]
+
+  @@index([student_id, drive_id, at])
+}
+
+// Written ONLY by the rule engine after every offer / policy / exception event.
+// student_status_v reads from here, so dashboards never recompute status themselves.
+model student_placement_state {
+  student_id           String   @id @db.Uuid
+  placement_status     String // Unplaced | Internship only | FTE only | Internship + PPO/FTE
+  current_category     Category?
+  highest_ctc_enc      String?
+  accepted_offer_count Int      @default(0)
+  switching_json       Json // { rule, allowed_categories, min_ctc_lpa, blocked_all, note }
+  policy_version       Int
+  updated_at           DateTime @default(now()) @updatedAt
+
+  student student @relation(fields: [student_id], references: [id], onDelete: Cascade)
+}
+
+model exception {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id  String    @db.Uuid
+  rule_code   String
+  reason      String
+  approved_by String    @db.Uuid
+  expires_at  DateTime
+  revoked_at  DateTime?
+  created_at  DateTime  @default(now())
+
+  student    student      @relation(fields: [student_id], references: [id])
+  attendance attendance[]
+}
+
+// Coordinators request, Officer/Admin approve (creates the exception).
+model exception_request {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id   String        @db.Uuid
+  rule_code    String
+  reason       String
+  requested_by String        @db.Uuid
+  status       RequestStatus @default(pending)
+  decided_by   String?       @db.Uuid
+  decided_at   DateTime?
+  exception_id String?       @db.Uuid
+  created_at   DateTime      @default(now())
+}
+
+// Students cannot edit contact details; they request, a coordinator/officer approves.
+model contact_change_request {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student_id    String        @db.Uuid
+  field         String // mobile | email
+  new_value_enc String
+  status        RequestStatus @default(pending)
+  decided_by    String?       @db.Uuid
+  decided_at    DateTime?
+  created_at    DateTime      @default(now())
+
+  student student @relation(fields: [student_id], references: [id])
+}
+
+// Review queue entries (engine REVIEW decisions, absenteeism flags, suspected violations, expired offers).
+model review_case {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind              CaseKind
+  student_id        String?    @db.Uuid
+  programme_id      String?    @db.Uuid
+  application_id    String?    @db.Uuid
+  ref_id            String?
+  payload           Json       @default("{}")
+  status            CaseStatus @default(open)
+  opened_at         DateTime   @default(now())
+  resolved_by       String?    @db.Uuid
+  resolved_at       DateTime?
+  resolution_reason String?
+
+  @@index([status, kind])
+}
+
+// ------------------------------------------------------------ audit / ops ----
+
+// Hash chain: hash = SHA-256(prev_hash || canonical(row)). UPDATE/DELETE are revoked from the app role;
+// GET /api/audit/verify walks the chain and reports the first broken link.
+model audit_log {
+  id          BigInt   @id @default(autoincrement())
+  actor_id    String?  @db.Uuid
+  role        String?
+  action      String
+  entity      String?
+  entity_id   String?
+  before_json Json?
+  after_json  Json?
+  meta        Json?
+  ip          String?
+  at          DateTime @default(now())
+  prev_hash   String
+  hash        String
+
+  @@index([actor_id, at])
+  @@index([entity, entity_id])
+}
+
+model export_log {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actor_id    String   @db.Uuid
+  kind        String
+  filter_json Json
+  row_count   Int
+  fields      Json
+  file_hash   String
+  at          DateTime @default(now())
+}
+
+model system_setting {
+  key        String   @id
+  value_json Json
+  updated_by String?  @db.Uuid
+  updated_at DateTime @default(now()) @updatedAt
+}

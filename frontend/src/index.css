@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/*
+  NFSU Placement Portal — Design Tokens
+  ---------------------------------------------------------------------------
+  Palette is PROVISIONAL. Exact official NFSU hex values could not be
+  verified programmatically in this environment (direct fetches to
+  nfsu.ac.in are blocked, and the logo file could not be downloaded for
+  pixel sampling). These three core colors are inspired by NFSU's visible
+  institutional seal — navy, maroon, and brass gold, consistent with the
+  national-government seal styling used across Ministry of Home Affairs
+  institutions. Swap the --nfsu-navy / --nfsu-maroon / --nfsu-gold values
+  below if you can confirm the official hex codes (e.g. from the live
+  site's computed CSS) and every other token updates with them.
+*/
+
+@theme inline {
+  /* ---- Brand (max 3 core colors) ---- */
+  --color-navy-950: #060f1c;
+  --color-navy-900: #0a1f38;
+  --color-navy-800: #0e2b4a;
+  --color-navy-700: #15406e;
+  --color-navy-600: #1d5490;
+  --color-navy-500: #2c5f93;
+  --color-navy-400: #5a82ac;
+  --color-navy-300: #8fafcb;
+  --color-navy-200: #bcd0e2;
+  --color-navy-100: #e3ebf3;
+  --color-navy-50: #f1f5f9;
+
+  --color-maroon-900: #3a0c15;
+  --color-maroon-800: #4a0f1a;
+  --color-maroon-700: #6e1b2c;
+  --color-maroon-600: #852537;
+  --color-maroon-500: #9a3347;
+  --color-maroon-300: #c77f8d;
+  --color-maroon-200: #e8c9cf;
+  --color-maroon-100: #f4e3e6;
+
+  --color-gold-800: #6b5118;
+  --color-gold-700: #8a6a1e;
+  --color-gold-600: #a37c26;
+  --color-gold-500: #b8912f;
+  --color-gold-400: #c8a654;
+  --color-gold-300: #ddc27a;
+  --color-gold-200: #ead9ab;
+  --color-gold-100: #f3e9d0;
+
+  /* ---- Neutrals: warm paper (light) ---- */
+  --color-paper-0: #faf8f4;
+  --color-paper-50: #f4f1ea;
+  --color-paper-100: #ece7dc;
+  --color-paper-200: #ddd6c7;
+  --color-paper-300: #c7bda7;
+  --color-ink-900: #1c1b19;
+  --color-ink-700: #3a372f;
+  --color-ink-500: #5b564c;
+  --color-ink-300: #8c8577;
+
+  /* ---- Neutrals: charcoal (dark) ---- */
+  --color-charcoal-950: #121212;
+  --color-charcoal-900: #19191a;
+  --color-charcoal-800: #232324;
+  --color-charcoal-700: #2e2e2f;
+  --color-charcoal-600: #3c3c3d;
+  --color-cream-100: #f2f0eb;
+  --color-cream-300: #cfccc4;
+  --color-cream-500: #a8a39a;
+
+  /* ---- Semantic (muted, functional only) ---- */
+  --color-allow-light: #2f6f4e;
+  --color-allow-bg-light: #e5f0e9;
+  --color-allow-dark: #6fb78e;
+  --color-allow-bg-dark: #1a2b22;
+
+  --color-review-light: #8a6414;
+  --color-review-bg-light: #f3ecd8;
+  --color-review-dark: #d9a94c;
+  --color-review-bg-dark: #332a16;
+
+  --color-block-light: #9c3b3b;
+  --color-block-bg-light: #f3e0df;
+  --color-block-dark: #d9837c;
+  --color-block-bg-dark: #302019;
+
+  --font-sans: "Public Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-serif: "Source Serif 4", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --radius-lg: 10px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Semantic surface/text tokens — these are what components consume.      */
+/* Light mode is the default; [data-theme="dark"] overrides.              */
+/* ---------------------------------------------------------------------- */
+:root {
+  --surface-bg: var(--color-paper-0);
+  --surface-1: var(--color-paper-50);
+  --surface-2: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-border: var(--color-paper-200);
+  --surface-border-strong: var(--color-paper-300);
+
+  --text-primary: var(--color-ink-900);
+  --text-secondary: var(--color-ink-500);
+  --text-tertiary: var(--color-ink-300);
+  --text-on-brand: var(--color-paper-0);
+
+  --brand-primary: var(--color-navy-800);
+  --brand-primary-hover: var(--color-navy-900);
+  --brand-primary-active: var(--color-navy-950);
+  --brand-accent: var(--color-maroon-700);
+  --brand-gold: var(--color-gold-600);
+
+  --nav-bg: var(--color-navy-900);
+  --nav-text: var(--color-navy-100);
+  --nav-text-muted: var(--color-navy-300);
+  --nav-active-bg: var(--color-navy-800);
+  --nav-active-border: var(--color-gold-500);
+
+  --focus-ring: var(--color-gold-600);
+
+  --status-allow-text: var(--color-allow-light);
+  --status-allow-bg: var(--color-allow-bg-light);
+  --status-review-text: var(--color-review-light);
+  --status-review-bg: var(--color-review-bg-light);
+  --status-block-text: var(--color-block-light);
+  --status-block-bg: var(--color-block-bg-light);
+
+  --shadow-color: 28 27 25;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --surface-bg: var(--color-charcoal-950);
+  --surface-1: var(--color-charcoal-900);
+  --surface-2: var(--color-charcoal-800);
+  --surface-raised: var(--color-charcoal-800);
+  --surface-border: var(--color-charcoal-700);
+  --surface-border-strong: var(--color-charcoal-600);
+
+  --text-primary: var(--color-cream-100);
+  --text-secondary: var(--color-cream-300);
+  --text-tertiary: var(--color-cream-500);
+  --text-on-brand: var(--color-cream-100);
+
+  --brand-primary: var(--color-navy-500);
+  --brand-primary-hover: var(--color-navy-400);
+  --brand-primary-active: var(--color-navy-300);
+  --brand-accent: var(--color-maroon-500);
+  --brand-gold: var(--color-gold-400);
+
+  --nav-bg: var(--color-charcoal-900);
+  --nav-text: var(--color-cream-100);
+  --nav-text-muted: var(--color-cream-500);
+  --nav-active-bg: var(--color-charcoal-700);
+  --nav-active-border: var(--color-gold-400);
+
+  --focus-ring: var(--color-gold-400);
+
+  --status-allow-text: var(--color-allow-dark);
+  --status-allow-bg: var(--color-allow-bg-dark);
+  --status-review-text: var(--color-review-dark);
+  --status-review-bg: var(--color-review-bg-dark);
+  --status-block-text: var(--color-block-dark);
+  --status-block-bg: var(--color-block-bg-dark);
+
+  --shadow-color: 0 0 0;
+  color-scheme: dark;
+}
+
+* {
+  border-color: var(--surface-border);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+::selection {
+  background: var(--brand-gold);
+  color: var(--color-navy-950);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Tabular numerals for data-dense tables */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Dotted texture on the institutional panel (a class, not an inline style, so the production CSP can be strict). */
+.dot-grid {
+  background-image: radial-gradient(circle at 1px 1px, var(--brand-gold) 1px, transparent 0);
+  background-size: 22px 22px;
+}
